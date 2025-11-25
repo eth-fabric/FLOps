@@ -27,58 +27,6 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         }
     }
 
-    function computeBundlerCommitHash(FlopsData memory data) public view returns (bytes32) {
-        bytes32 digest = keccak256(abi.encode(data));
-        return MessageHashUtils.toEthSignedMessageHash(digest);
-    }
-
-    function verifyBundlerSignature(PackedUserOperation calldata userOp) public view returns (bool) {
-        // Retrieve the FlopsCommitment from the paymasterAndData
-        bytes calldata flopsBytes = UserOperationLib.getPaymasterSignature(userOp.paymasterAndData);
-        FlopsCommitment memory commitment = abi.decode(flopsBytes, (FlopsCommitment));
-
-        // Verify the committed userOpHash matches the computed userOpHash
-        if (commitment.data.userOpHash != entryPoint().getUserOpHash(userOp)) return false;
-
-        // Compute the commitment hash
-        bytes32 commitmentHash = computeBundlerCommitHash(commitment.data);
-
-        // Verify the signer is an approved bundler
-        address recovered = ECDSA.recover(commitmentHash, commitment.signature);
-        return approvedBundlers[recovered];
-    }
-
-    function _finalizeBundle() internal {
-        BundleInfo storage info = bundles[currentBundleNumber];
-        require(!info.finalized, "FLOps: bundle already finalized");
-        info.finalRollingHash = rollingHash;
-        info.finalized = true;
-        // move to next bundle
-        currentBundleNumber += 1;
-        // reset rolling hash
-        rollingHash = bytes32(0);
-    }
-
-    function finalizeCurrentBundle() external onlyOwner {
-        _finalizeBundle();
-    }
-
-    function bundleBroken() external view returns (bool) {
-        return bundles[currentBundleNumber].broken;
-    }
-
-    function bundleBroken(uint256 bundleNumber) external view returns (bool) {
-        return bundles[bundleNumber].broken;
-    }
-
-    function setFactory(address factory_) external onlyOwner {
-        _factory = IFlopsAccountFactory(factory_);
-    }
-
-    function factory() external view returns (address) {
-        return address(_factory);
-    }
-
     /**
      * Validate a user operation.
      * @param userOp     - The user operation.
@@ -151,6 +99,62 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
             bundles[currentBundleNumber].broken = true;
         }
         // any billing or accounting can go here later
+    }
+
+    function nextRollingHash(PackedUserOperation calldata userOp) public view returns (bytes32) {
+        return keccak256(abi.encode(rollingHash, entryPoint().getUserOpHash(userOp)));
+    }
+
+    function verifyBundlerSignature(PackedUserOperation calldata userOp) public view returns (bool) {
+        // Retrieve the FlopsCommitment from the paymasterAndData
+        bytes calldata flopsBytes = UserOperationLib.getPaymasterSignature(userOp.paymasterAndData);
+        FlopsCommitment memory commitment = abi.decode(flopsBytes, (FlopsCommitment));
+
+        // Verify the committed userOpHash matches the computed userOpHash
+        if (commitment.data.userOpHash != entryPoint().getUserOpHash(userOp)) return false;
+
+        // Compute the commitment hash
+        bytes32 commitmentHash = computeBundlerCommitHash(commitment.data);
+
+        // Verify the signer is an approved bundler
+        address recovered = ECDSA.recover(commitmentHash, commitment.signature);
+        return approvedBundlers[recovered];
+    }
+
+    function finalizeCurrentBundle() external onlyOwner {
+        _finalizeBundle();
+    }
+
+    function bundleBroken() external view returns (bool) {
+        return bundles[currentBundleNumber].broken;
+    }
+
+    function bundleBroken(uint256 bundleNumber) external view returns (bool) {
+        return bundles[bundleNumber].broken;
+    }
+
+    function setFactory(address factory_) external onlyOwner {
+        _factory = IFlopsAccountFactory(factory_);
+    }
+
+    function factory() external view returns (address) {
+        return address(_factory);
+    }
+
+    function computeBundlerCommitHash(FlopsData memory data) public view returns (bytes32) {
+        bytes32 digest = keccak256(abi.encode(data));
+        return MessageHashUtils.toEthSignedMessageHash(digest);
+    }
+
+    function _finalizeBundle() internal {
+        BundleInfo storage info = bundles[currentBundleNumber];
+        require(!info.finalized, "FLOps: bundle already finalized");
+        info.finalRollingHash = rollingHash;
+        info.finalized = true;
+        // move to next bundle
+        currentBundleNumber += 1;
+        // reset rolling hash
+        rollingHash = bytes32(0);
     }
 }
 

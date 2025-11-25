@@ -170,4 +170,56 @@ contract FLOpsTest is Helpers {
         assertEq(address(aliceAcct).balance, 99 ether);
         assertEq(address(charlie).balance, 1 ether);
     }
+
+    // Multiple ETH transfers using FlopsPaymaster
+    function test_bundleWithPaymaster() public {
+        address paymaster = address(flopsPaymaster);
+        uint128 verificationGasLimit = 200000;
+        uint128 postOpGasLimit = 100000;
+        bytes memory _staticPaymasterFields =
+            staticPaymasterFieldsWithMagicPlaceholder(paymaster, verificationGasLimit, postOpGasLimit);
+
+        // Signed user operation
+        PackedUserOperation memory userOp1 =
+            buildUserOp(aliceAcct, charlie, 1 ether, _staticPaymasterFields, alicePrivateKey);
+
+        PackedUserOperation memory userOp2 =
+            buildUserOp(bobAcct, charlie, 1 ether, _staticPaymasterFields, bobPrivateKey);
+
+        // Flop data from bundler
+        FlopsData memory flopsData1 = FlopsData({
+            bundleNumber: 0, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp1), endOfBundle: false
+        });
+
+        FlopsData memory flopsData2 = FlopsData({
+            bundleNumber: 0,
+            preTxState: flopsPaymaster.nextRollingHash(userOp1),
+            userOpHash: entryPoint.getUserOpHash(userOp2),
+            endOfBundle: true
+        });
+
+        // Append bunder-signed FlopsCommitment to paymasterAndData
+        bytes memory paymasterAndData1 =
+            buildPaymasterAndData(paymaster, verificationGasLimit, postOpGasLimit, flopsData1, bundlerPrivateKey);
+
+        bytes memory paymasterAndData2 =
+            buildPaymasterAndData(paymaster, verificationGasLimit, postOpGasLimit, flopsData2, bundlerPrivateKey);
+
+        // Replace paymasterAndData in userOp with the bunder-signed version
+        userOp1.paymasterAndData = paymasterAndData1;
+        userOp2.paymasterAndData = paymasterAndData2;
+
+        PackedUserOperation[] memory userOps = new PackedUserOperation[](2);
+        userOps[0] = userOp1;
+        userOps[1] = userOp2;
+
+        // Call from an EOA to satisfy EntryPoint's nonReentrant modifier
+        // Use prank with both msg.sender and tx.origin set to the same EOA
+        vm.prank(bundlerAddress, bundlerAddress);
+        entryPoint.handleOps(userOps, payable(bundlerAddress));
+
+        assertEq(address(aliceAcct).balance, 99 ether);
+        assertEq(address(bobAcct).balance, 99 ether);
+        assertEq(address(charlie).balance, 2 ether);
+    }
 }
