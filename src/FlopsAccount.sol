@@ -6,15 +6,18 @@ import {IEntryPoint} from "lib/account-abstraction/contracts/interfaces/IEntryPo
 import {PackedUserOperation} from "lib/account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 import "account-abstraction/core/Helpers.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {IFlopsPaymaster} from "./IFlopsPaymaster.sol";
 
 contract FlopsAccount is BaseAccount {
     address public constant ENTRY_POINT_ADDRESS = 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108;
     address public owner;
     address public factory;
+    IFlopsPaymaster public flopsPaymaster;
 
-    constructor(address _owner, address _factory) {
+    constructor(address _owner, address _factory, address _paymaster) {
         owner = _owner;
         factory = _factory;
+        flopsPaymaster = IFlopsPaymaster(_paymaster);
     }
     receive() external payable {}
 
@@ -36,7 +39,8 @@ contract FlopsAccount is BaseAccount {
 
     function _requireForExecute() internal view override {
         _requireFromEntryPoint();
-        // todo check if bundle is broken at the paymaster
+        // FLOps global guard: once current bundle is broken, no FlopsAccount should execute in this bundle
+        if (flopsPaymaster.bundleBroken()) revert("FLOps: bundle broken");
     }
 
     /**

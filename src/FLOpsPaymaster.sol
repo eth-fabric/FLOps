@@ -4,27 +4,79 @@ pragma solidity ^0.8.20;
 import {PackedUserOperation} from "lib/account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 import {BasePaymaster} from "lib/account-abstraction/contracts/core/BasePaymaster.sol";
 import {IEntryPoint} from "lib/account-abstraction/contracts/interfaces/IEntryPoint.sol";
+import {UserOperationLib} from "lib/account-abstraction/contracts/core/UserOperationLib.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {IFlopsPaymaster} from "./IFlopsPaymaster.sol";
+import {IFlopsAccountFactory} from "./IFlopsAccountFactory.sol";
+import {BundleInfo, FlopsData, FlopsCommitment} from "./FlopsStructs.sol";
 
 contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
-    bool public bundleBroken;
+    mapping(address => bool) public approvedBundlers;
+    mapping(uint256 => BundleInfo) public bundles;
+    uint256 public currentBundleNumber;
+    bytes32 public rollingHash;
+    IFlopsAccountFactory private _factory;
 
-    address public atomicEntryPoint;
-
-    constructor(IEntryPoint _entryPoint, address _owner) BasePaymaster(_entryPoint, _owner) {}
-
-    modifier _requireFromAtomicEntryPoint() {
-        require(msg.sender == address(atomicEntryPoint), "FlopsPaymaster: Not from atomic entrypoint");
-        _;
+    constructor(IEntryPoint _entryPoint, address _owner, address[] memory bundlers) BasePaymaster(_entryPoint, _owner) {
+        currentBundleNumber = 0;
+        rollingHash = bytes32(0);
+        for (uint256 i = 0; i < bundlers.length; i++) {
+            approvedBundlers[bundlers[i]] = true;
+        }
     }
 
-    function setAtomicEntryPoint(address _atomicEntryPoint) external onlyOwner {
-        atomicEntryPoint = _atomicEntryPoint;
+    function computeBundlerCommitHash(FlopsData memory data) public view returns (bytes32) {
+        bytes32 digest = keccak256(abi.encode(data));
+        return MessageHashUtils.toEthSignedMessageHash(digest);
     }
 
-    function resetBundle() external {
-        bundleBroken = false;
+    function verifyBundlerSignature(PackedUserOperation calldata userOp) public view returns (bool) {
+        // Retrieve the FlopsCommitment from the paymasterAndData
+        bytes calldata flopsBytes = UserOperationLib.getPaymasterSignature(userOp.paymasterAndData);
+        FlopsCommitment memory commitment = abi.decode(flopsBytes, (FlopsCommitment));
+
+        // Verify the committed userOpHash matches the computed userOpHash
+        if (commitment.data.userOpHash != entryPoint().getUserOpHash(userOp)) return false;
+
+        // Compute the commitment hash
+        bytes32 commitmentHash = computeBundlerCommitHash(commitment.data);
+
+        // Verify the signer is an approved bundler
+        address recovered = ECDSA.recover(commitmentHash, commitment.signature);
+        return approvedBundlers[recovered];
+    }
+
+    function _finalizeBundle() internal {
+        BundleInfo storage info = bundles[currentBundleNumber];
+        require(!info.finalized, "FLOps: bundle already finalized");
+        info.finalRollingHash = rollingHash;
+        info.finalized = true;
+        // move to next bundle
+        currentBundleNumber += 1;
+        // reset rolling hash
+        rollingHash = bytes32(0);
+    }
+
+    function finalizeCurrentBundle() external onlyOwner {
+        _finalizeBundle();
+    }
+
+    function bundleBroken() external view returns (bool) {
+        return bundles[currentBundleNumber].broken;
+    }
+
+    function bundleBroken(uint256 bundleNumber) external view returns (bool) {
+        return bundles[bundleNumber].broken;
+    }
+
+    function setFactory(address factory_) external onlyOwner {
+        _factory = IFlopsAccountFactory(factory_);
+    }
+
+    function factory() external view returns (address) {
+        return address(_factory);
     }
 
     /**
@@ -38,8 +90,42 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         override
         returns (bytes memory context, uint256 validationData)
     {
-        // todo update rolling hashes
-        return (context, validationData);
+        FlopsData memory d =
+        abi.decode(UserOperationLib.getPaymasterSignature(userOp.paymasterAndData), (FlopsCommitment)).data;
+
+        // Only operate on the live bundle
+        if (d.bundleNumber != currentBundleNumber) {
+            bundles[currentBundleNumber].broken = true;
+            return ("", 0);
+        }
+
+        bool broken = false;
+
+        // Verify pre-transaction state
+        if (d.preTxState != rollingHash) broken = true;
+
+        // Verify bundler signature
+        if (!verifyBundlerSignature(userOp)) broken = true;
+
+        // Verify bundle only contains FlopsAccount transactions
+        if (!_factory.isFlopsAccount(userOp.sender)) broken = true;
+
+        if (broken) {
+            // FLOps violation detected during validation
+            bundles[d.bundleNumber].broken = true;
+            // do not advance rollingHash
+            return ("", 0);
+        }
+
+        // Happy path: advance rolling hash for this bundle
+        rollingHash = keccak256(abi.encode(rollingHash, d.userOpHash));
+
+        // If this is the end of bundle, finalize it
+        if (d.endOfBundle) {
+            _finalizeBundle();
+        }
+
+        return ("", 0);
     }
 
     /**
@@ -61,10 +147,10 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         internal
         override
     {
-        if (mode == PostOpMode.opReverted) {
-            bundleBroken = true;
+        if (mode != PostOpMode.opSucceeded) {
+            bundles[currentBundleNumber].broken = true;
         }
-
-        // todo
+        // any billing or accounting can go here later
     }
 }
+

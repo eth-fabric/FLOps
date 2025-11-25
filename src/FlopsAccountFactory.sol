@@ -5,8 +5,13 @@ import {FlopsAccount} from "./FlopsAccount.sol";
 
 contract FlopsAccountFactory {
     mapping(address => bool) public isFlopsAccount;
+    address public flopsPaymaster;
 
     event AccountCreated(address indexed account, address indexed owner);
+
+    constructor(address _flopsPaymaster) {
+        flopsPaymaster = _flopsPaymaster;
+    }
 
     /**
      * Create a new FlopsAccount
@@ -14,7 +19,7 @@ contract FlopsAccountFactory {
      * @return account The address of the newly created account
      */
     function createAccount(address owner) external returns (address account) {
-        FlopsAccount newAccount = new FlopsAccount(owner, address(this));
+        FlopsAccount newAccount = new FlopsAccount(owner, address(this), flopsPaymaster);
         account = address(newAccount);
         isFlopsAccount[account] = true;
         emit AccountCreated(account, owner);
