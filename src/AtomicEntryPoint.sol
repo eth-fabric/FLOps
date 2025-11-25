@@ -4,15 +4,15 @@ pragma solidity ^0.8.20;
 import {IEntryPoint, PackedUserOperation} from "lib/openzeppelin-contracts/contracts/interfaces/draft-IERC4337.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
-import {IFLOpsPaymaster} from "./IFLOpsPaymaster.sol";
+import {IFlopsPaymaster} from "./IFlopsPaymaster.sol";
 
 contract AtomicEntryPoint is ReentrancyGuardTransient {
     IEntryPoint public immutable entryPoint;
-    IFLOpsPaymaster public immutable flops;
+    IFlopsPaymaster public immutable flops;
 
     constructor(address _entryPoint, address _flopsPaymaster) {
         entryPoint = IEntryPoint(_entryPoint);
-        flops = IFLOpsPaymaster(_flopsPaymaster);
+        flops = IFlopsPaymaster(_flopsPaymaster);
     }
 
     function handleOps(PackedUserOperation[] calldata ops, address payable beneficiary) external nonReentrant {

@@ -5,9 +5,9 @@ import {PackedUserOperation} from "lib/account-abstraction/contracts/interfaces/
 import {BasePaymaster} from "lib/account-abstraction/contracts/core/BasePaymaster.sol";
 import {IEntryPoint} from "lib/account-abstraction/contracts/interfaces/IEntryPoint.sol";
 
-import {IFLOpsPaymaster} from "./IFLOpsPaymaster.sol";
+import {IFlopsPaymaster} from "./IFlopsPaymaster.sol";
 
-contract FLOpsPaymaster is BasePaymaster, IFLOpsPaymaster {
+contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
     bool public bundleBroken;
 
     address public atomicEntryPoint;
@@ -15,7 +15,7 @@ contract FLOpsPaymaster is BasePaymaster, IFLOpsPaymaster {
     constructor(IEntryPoint _entryPoint, address _owner) BasePaymaster(_entryPoint, _owner) {}
 
     modifier _requireFromAtomicEntryPoint() {
-        require(msg.sender == address(atomicEntryPoint), "FLOpsPaymaster: Not from atomic entrypoint");
+        require(msg.sender == address(atomicEntryPoint), "FlopsPaymaster: Not from atomic entrypoint");
         _;
     }
 

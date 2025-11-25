@@ -2,20 +2,27 @@
 pragma solidity ^0.8.20;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {FLOpsPaymaster} from "../src/FLOpsPaymaster.sol";
+import {FlopsPaymaster} from "../src/FlopsPaymaster.sol";
 import {AtomicEntryPoint} from "../src/AtomicEntryPoint.sol";
 import {EntryPoint} from "lib/account-abstraction/contracts/core/EntryPoint.sol";
 import {IEntryPoint} from "lib/account-abstraction/contracts/interfaces/IEntryPoint.sol";
+import {BaseAccount} from "lib/account-abstraction/contracts/core/BaseAccount.sol";
+import {PackedUserOperation} from "lib/account-abstraction/contracts/interfaces/PackedUserOperation.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
-import {BasicAccount} from "./BasicAccount.sol";
+import {FlopsAccount} from "../src/FlopsAccount.sol";
 
 contract FLOpsTest is Test {
     EntryPoint public entryPoint;
-    FLOpsPaymaster public flopsPaymaster;
+    FlopsPaymaster public flopsPaymaster;
     AtomicEntryPoint public atomicEntryPoint;
 
-    BasicAccount public alice;
-    BasicAccount public bob;
+    uint256 public alicePrivateKey;
+    uint256 public bobPrivateKey;
+    address public aliceAddress;
+    address public bobAddress;
+    FlopsAccount public alice;
+    FlopsAccount public bob;
     address public owner;
 
     // Force to canonical entrypoint address, todo use create2 deployer
@@ -29,21 +36,49 @@ contract FLOpsTest is Test {
     function setUp() public {
         owner = makeAddr("owner");
         entryPoint = deployEntryPoint();
-        flopsPaymaster = new FLOpsPaymaster(IEntryPoint(address(entryPoint)), owner);
+        flopsPaymaster = new FlopsPaymaster(IEntryPoint(address(entryPoint)), owner);
         atomicEntryPoint = new AtomicEntryPoint(address(entryPoint), address(flopsPaymaster));
 
         vm.prank(owner);
         flopsPaymaster.setAtomicEntryPoint(address(atomicEntryPoint));
 
-        // Setup smart accounts with ETH
-        alice = new BasicAccount(makeAddr("alice"));
+        // Create smart accounts
+        (aliceAddress, alicePrivateKey) = makeAddrAndKey("alice");
+        (bobAddress, bobPrivateKey) = makeAddrAndKey("bob");
+        alice = new FlopsAccount(aliceAddress);
+        bob = new FlopsAccount(bobAddress);
+
+        // Fund smart accounts with ETH
         vm.deal(address(alice), 100 ether);
-        bob = new BasicAccount(makeAddr("bob"));
         vm.deal(address(bob), 100 ether);
 
         // Pre-fill gas at entrypoint for smart accounts
         entryPoint.depositTo{value: 100 ether}(address(alice));
         entryPoint.depositTo{value: 100 ether}(address(bob));
+    }
+
+    function buildUserOp(FlopsAccount account, address to, uint256 value, bytes memory paymasterAndData, uint256 privateKey)
+        public
+        returns (PackedUserOperation memory)
+    {
+        assertEq(vm.addr(privateKey), account.owner());
+        PackedUserOperation memory userOp = PackedUserOperation({
+            sender: address(account),
+            nonce: account.getNonce(),
+            initCode: "",
+            callData: abi.encodeWithSelector(BaseAccount.execute.selector, to, value, ""),
+            accountGasLimits: bytes32(abi.encodePacked(uint128(100000), uint128(100000))),
+            preVerificationGas: 100000,
+            gasFees: bytes32(abi.encodePacked(uint128(1000000000), uint128(1000000000))),
+            paymasterAndData: paymasterAndData,
+            signature: ""
+        });
+
+        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, userOpHash);
+        bytes memory signature = abi.encodePacked(r, s, v);
+        userOp.signature = signature;
+        return userOp;
     }
 
     function test_setUp() public {
@@ -59,6 +94,10 @@ contract FLOpsTest is Test {
         // setAtomicEntryPoint works
         assertEq(address(flopsPaymaster.atomicEntryPoint()), address(atomicEntryPoint));
 
+        // account addresses are correct
+        assertEq(aliceAddress, alice.owner());
+        assertEq(bobAddress, bob.owner());
+
         // alice and bob have ETH in their accounts
         assertEq(address(alice).balance, 100 ether);
         assertEq(address(bob).balance, 100 ether);
@@ -66,5 +105,58 @@ contract FLOpsTest is Test {
         // alice and bob have gas in the entrypoint
         assertEq(entryPoint.balanceOf(address(alice)), 100 ether);
         assertEq(entryPoint.balanceOf(address(bob)), 100 ether);
+    }
+
+    function test_buildUserOp() public {
+        address charlie = makeAddr("charlie");
+        PackedUserOperation memory userOp = buildUserOp(alice, charlie, 1 ether, "", alicePrivateKey);
+        assertEq(userOp.sender, address(alice));
+        assertEq(userOp.nonce, alice.getNonce());
+        assertEq(userOp.callData, abi.encodeWithSelector(BaseAccount.execute.selector, address(charlie), 1 ether, ""));
+        assertEq(userOp.accountGasLimits, bytes32(abi.encodePacked(uint128(100000), uint128(100000))));
+        assertEq(userOp.preVerificationGas, 100000);
+        assertEq(userOp.gasFees, bytes32(abi.encodePacked(uint128(1000000000), uint128(1000000000))));
+
+        // verify signature
+        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
+        address recovered = ECDSA.recover(userOpHash, userOp.signature);
+        assertEq(recovered, aliceAddress);
+    }
+
+    function test_sendETH() public {
+        address charlie = makeAddr("charlie");
+        PackedUserOperation memory userOp = buildUserOp(alice, charlie, 1 ether, "", alicePrivateKey);
+        PackedUserOperation[] memory userOps = new PackedUserOperation[](1);
+        userOps[0] = userOp;
+
+        // Call from an EOA to satisfy EntryPoint's nonReentrant modifier
+        // Use prank with both msg.sender and tx.origin set to the same EOA
+        address bundler = makeAddr("bundler");
+        vm.prank(bundler, bundler);
+        entryPoint.handleOps(userOps, payable(makeAddr("beneficiary")));
+        
+        assertEq(address(alice).balance, 99 ether);
+        assertEq(address(charlie).balance, 1 ether);
+    }
+
+    function test_foo() public {
+        // Use EIP-7702 to attach AtomicEntryPoint code to the bundler
+        (address bundler, uint256 privateKey) = makeAddrAndKey("bundler");
+        console2.log(bundler.code.length);
+        vm.signAndAttachDelegation(address(atomicEntryPoint), privateKey);
+
+        console2.log(bundler.code.length);
+
+        // Create the user operation
+        address charlie = makeAddr("charlie");
+        PackedUserOperation memory userOp = buildUserOp(alice, charlie, 1 ether, "", alicePrivateKey);
+        PackedUserOperation[] memory userOps = new PackedUserOperation[](1);
+        userOps[0] = userOp;
+
+        // Call the handleOps function on the bundler
+        bundler.call(abi.encodeWithSelector(atomicEntryPoint.handleOps.selector, userOps, payable(makeAddr("beneficiary"))));
+
+        assertEq(address(alice).balance, 99 ether);
+        assertEq(address(charlie).balance, 1 ether);
     }
 }
