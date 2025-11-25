@@ -10,10 +10,12 @@ import {PackedUserOperation} from "lib/account-abstraction/contracts/interfaces/
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {FlopsAccount} from "../src/FlopsAccount.sol";
+import {FlopsAccountFactory} from "../src/FlopsAccountFactory.sol";
 
 contract FLOpsTest is Test {
     EntryPoint public entryPoint;
     FlopsPaymaster public flopsPaymaster;
+    FlopsAccountFactory public factory;
 
     uint256 public alicePrivateKey;
     uint256 public bobPrivateKey;
@@ -35,12 +37,13 @@ contract FLOpsTest is Test {
         owner = makeAddr("owner");
         entryPoint = deployEntryPoint();
         flopsPaymaster = new FlopsPaymaster(IEntryPoint(address(entryPoint)), owner);
+        factory = new FlopsAccountFactory();
 
         // Create smart accounts
         (aliceAddress, alicePrivateKey) = makeAddrAndKey("alice");
         (bobAddress, bobPrivateKey) = makeAddrAndKey("bob");
-        alice = new FlopsAccount(aliceAddress);
-        bob = new FlopsAccount(bobAddress);
+        alice = FlopsAccount(payable(factory.createAccount(aliceAddress)));
+        bob = FlopsAccount(payable(factory.createAccount(bobAddress)));
 
         // Fund smart accounts with ETH
         vm.deal(address(alice), 100 ether);
@@ -91,6 +94,14 @@ contract FLOpsTest is Test {
         // account addresses are correct
         assertEq(aliceAddress, alice.owner());
         assertEq(bobAddress, bob.owner());
+
+        // accounts have correct factory reference
+        assertEq(alice.factory(), address(factory));
+        assertEq(bob.factory(), address(factory));
+
+        // factory correctly registered accounts
+        assertTrue(factory.isFlopsAccount(address(alice)));
+        assertTrue(factory.isFlopsAccount(address(bob)));
 
         // alice and bob have ETH in their accounts
         assertEq(address(alice).balance, 100 ether);

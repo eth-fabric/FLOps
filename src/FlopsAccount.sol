@@ -10,9 +10,11 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 contract FlopsAccount is BaseAccount {
     address public constant ENTRY_POINT_ADDRESS = 0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108;
     address public owner;
+    address public factory;
 
-    constructor(address _owner) {
+    constructor(address _owner, address _factory) {
         owner = _owner;
+        factory = _factory;
     }
     receive() external payable {}
 
@@ -57,4 +59,3 @@ contract FlopsAccount is BaseAccount {
         // currently does nothing
     }
 }
-
