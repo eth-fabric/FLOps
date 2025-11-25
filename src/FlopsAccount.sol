@@ -58,6 +58,3 @@ contract FlopsAccount is BaseAccount {
     }
 }
 
-
-
-

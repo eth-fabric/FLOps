@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Test, console2} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {FlopsPaymaster} from "../src/FlopsPaymaster.sol";
-import {AtomicEntryPoint} from "../src/AtomicEntryPoint.sol";
 import {EntryPoint} from "lib/account-abstraction/contracts/core/EntryPoint.sol";
 import {IEntryPoint} from "lib/account-abstraction/contracts/interfaces/IEntryPoint.sol";
 import {BaseAccount} from "lib/account-abstraction/contracts/core/BaseAccount.sol";
@@ -15,7 +14,6 @@ import {FlopsAccount} from "../src/FlopsAccount.sol";
 contract FLOpsTest is Test {
     EntryPoint public entryPoint;
     FlopsPaymaster public flopsPaymaster;
-    AtomicEntryPoint public atomicEntryPoint;
 
     uint256 public alicePrivateKey;
     uint256 public bobPrivateKey;
@@ -37,10 +35,6 @@ contract FLOpsTest is Test {
         owner = makeAddr("owner");
         entryPoint = deployEntryPoint();
         flopsPaymaster = new FlopsPaymaster(IEntryPoint(address(entryPoint)), owner);
-        atomicEntryPoint = new AtomicEntryPoint(address(entryPoint), address(flopsPaymaster));
-
-        vm.prank(owner);
-        flopsPaymaster.setAtomicEntryPoint(address(atomicEntryPoint));
 
         // Create smart accounts
         (aliceAddress, alicePrivateKey) = makeAddrAndKey("alice");
@@ -57,10 +51,13 @@ contract FLOpsTest is Test {
         entryPoint.depositTo{value: 100 ether}(address(bob));
     }
 
-    function buildUserOp(FlopsAccount account, address to, uint256 value, bytes memory paymasterAndData, uint256 privateKey)
-        public
-        returns (PackedUserOperation memory)
-    {
+    function buildUserOp(
+        FlopsAccount account,
+        address to,
+        uint256 value,
+        bytes memory paymasterAndData,
+        uint256 privateKey
+    ) public returns (PackedUserOperation memory) {
         assertEq(vm.addr(privateKey), account.owner());
         PackedUserOperation memory userOp = PackedUserOperation({
             sender: address(account),
@@ -90,9 +87,6 @@ contract FLOpsTest is Test {
             entryPoint.getPackedUserOpTypeHash(),
             bytes32(0x29a0bca4af4be3421398da00295e58e6d7de38cb492214754cb6a47507dd6f8e)
         );
-
-        // setAtomicEntryPoint works
-        assertEq(address(flopsPaymaster.atomicEntryPoint()), address(atomicEntryPoint));
 
         // account addresses are correct
         assertEq(aliceAddress, alice.owner());
@@ -134,27 +128,6 @@ contract FLOpsTest is Test {
         address bundler = makeAddr("bundler");
         vm.prank(bundler, bundler);
         entryPoint.handleOps(userOps, payable(makeAddr("beneficiary")));
-        
-        assertEq(address(alice).balance, 99 ether);
-        assertEq(address(charlie).balance, 1 ether);
-    }
-
-    function test_foo() public {
-        // Use EIP-7702 to attach AtomicEntryPoint code to the bundler
-        (address bundler, uint256 privateKey) = makeAddrAndKey("bundler");
-        console2.log(bundler.code.length);
-        vm.signAndAttachDelegation(address(atomicEntryPoint), privateKey);
-
-        console2.log(bundler.code.length);
-
-        // Create the user operation
-        address charlie = makeAddr("charlie");
-        PackedUserOperation memory userOp = buildUserOp(alice, charlie, 1 ether, "", alicePrivateKey);
-        PackedUserOperation[] memory userOps = new PackedUserOperation[](1);
-        userOps[0] = userOp;
-
-        // Call the handleOps function on the bundler
-        bundler.call(abi.encodeWithSelector(atomicEntryPoint.handleOps.selector, userOps, payable(makeAddr("beneficiary"))));
 
         assertEq(address(alice).balance, 99 ether);
         assertEq(address(charlie).balance, 1 ether);
