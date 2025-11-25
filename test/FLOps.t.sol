@@ -2,19 +2,24 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
+import {console} from "forge-std/console.sol";
 import {FlopsPaymaster} from "../src/FlopsPaymaster.sol";
 import {EntryPoint} from "lib/account-abstraction/contracts/core/EntryPoint.sol";
 import {IEntryPoint} from "lib/account-abstraction/contracts/interfaces/IEntryPoint.sol";
 import {BaseAccount} from "lib/account-abstraction/contracts/core/BaseAccount.sol";
 import {PackedUserOperation} from "lib/account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {UserOperationLib} from "lib/account-abstraction/contracts/core/UserOperationLib.sol";
 
 import {FlopsAccount} from "../src/FlopsAccount.sol";
 import {FlopsAccountFactory} from "../src/FlopsAccountFactory.sol";
-import {Helpers} from "./Helpers.sol";
+import {FlopsData, FlopsCommitment} from "../src/FlopsStructs.sol";
+import {Helpers, UserOperationLibHelper} from "./Helpers.sol";
 
 contract FLOpsTest is Helpers {
     function setUp() public {
+        setupEOAs();
+
         entryPoint = deployEntryPoint();
         address[] memory bundlers = new address[](1);
         bundlers[0] = bundlerAddress;
@@ -27,6 +32,8 @@ contract FLOpsTest is Helpers {
         flopsPaymaster.setFactory(address(factory));
 
         setupAccounts();
+
+        userOperationLibHelper = new UserOperationLibHelper();
     }
 
     function test_setUp() public {
@@ -77,17 +84,88 @@ contract FLOpsTest is Helpers {
     }
 
     // Basic eth transfer using vanilla bundler + BaseAccount
-    function test_sendETH() public {
-        address charlie = makeAddr("charlie");
+    function test_sendEth() public {
         PackedUserOperation memory userOp = buildUserOp(aliceAcct, charlie, 1 ether, "", alicePrivateKey);
         PackedUserOperation[] memory userOps = new PackedUserOperation[](1);
         userOps[0] = userOp;
 
         // Call from an EOA to satisfy EntryPoint's nonReentrant modifier
         // Use prank with both msg.sender and tx.origin set to the same EOA
-        address bundler = makeAddr("bundler");
-        vm.prank(bundler, bundler);
-        entryPoint.handleOps(userOps, payable(makeAddr("beneficiary")));
+        vm.prank(bundlerAddress, bundlerAddress);
+        entryPoint.handleOps(userOps, payable(bundlerAddress));
+
+        assertEq(address(aliceAcct).balance, 99 ether);
+        assertEq(address(charlie).balance, 1 ether);
+    }
+
+    function test_buildUserOpWithPaymaster() public {
+        address paymaster = address(flopsPaymaster);
+        uint128 verificationGasLimit = 100000;
+        uint128 postOpGasLimit = 100000;
+        bytes memory _staticPaymasterFields =
+            staticPaymasterFieldsWithMagicPlaceholder(paymaster, verificationGasLimit, postOpGasLimit);
+
+        PackedUserOperation memory userOp =
+            buildUserOp(aliceAcct, charlie, 1 ether, _staticPaymasterFields, alicePrivateKey);
+
+        // verify signature
+        bytes32 userOpHash = entryPoint.getUserOpHash(userOp);
+        address recovered = ECDSA.recover(userOpHash, userOp.signature);
+        assertEq(recovered, aliceAddress);
+
+        // Flop data from bundler
+        FlopsData memory flopsData =
+            FlopsData({bundleNumber: 1, preTxState: bytes32(0), userOpHash: userOpHash, endOfBundle: false});
+
+        // Append bunder-signed FlopsCommitment to paymasterAndData
+        bytes memory paymasterAndData =
+            buildPaymasterAndData(paymaster, verificationGasLimit, postOpGasLimit, flopsData, bundlerPrivateKey);
+
+        // Replace paymasterAndData in userOp with the bunder-signed version
+        userOp.paymasterAndData = paymasterAndData;
+
+        // Verify user's signature is still valid
+        // The paymaster's signature is not part of the userOpHash, so it should still be valid
+        // assuming the PAYMASTER_SIG_MAGIC was originally added to the userOp
+        userOpHash = entryPoint.getUserOpHash(userOp);
+        recovered = ECDSA.recover(userOpHash, userOp.signature);
+        assertEq(recovered, aliceAddress);
+
+        // Verify bundler signature
+        assertTrue(flopsPaymaster.verifyBundlerSignature(userOp), "Bundler signature not valid");
+    }
+
+    // Single ETH transfer using FlopsPaymaster
+    function test_sendEthWithPaymaster() public {
+        address paymaster = address(flopsPaymaster);
+        uint128 verificationGasLimit = 100000;
+        uint128 postOpGasLimit = 100000;
+        bytes memory _staticPaymasterFields =
+            staticPaymasterFieldsWithMagicPlaceholder(paymaster, verificationGasLimit, postOpGasLimit);
+
+        // Signed user operation
+        PackedUserOperation memory userOp =
+            buildUserOp(aliceAcct, charlie, 1 ether, _staticPaymasterFields, alicePrivateKey);
+
+        // Flop data from bundler
+        FlopsData memory flopsData = FlopsData({
+            bundleNumber: 0, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp), endOfBundle: false
+        });
+
+        // Append bunder-signed FlopsCommitment to paymasterAndData
+        bytes memory paymasterAndData =
+            buildPaymasterAndData(paymaster, verificationGasLimit, postOpGasLimit, flopsData, bundlerPrivateKey);
+
+        // Replace paymasterAndData in userOp with the bunder-signed version
+        userOp.paymasterAndData = paymasterAndData;
+
+        PackedUserOperation[] memory userOps = new PackedUserOperation[](1);
+        userOps[0] = userOp;
+
+        // Call from an EOA to satisfy EntryPoint's nonReentrant modifier
+        // Use prank with both msg.sender and tx.origin set to the same EOA
+        vm.prank(bundlerAddress, bundlerAddress);
+        entryPoint.handleOps(userOps, payable(bundlerAddress));
 
         assertEq(address(aliceAcct).balance, 99 ether);
         assertEq(address(charlie).balance, 1 ether);

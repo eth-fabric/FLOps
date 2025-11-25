@@ -15,10 +15,22 @@ import {FlopsAccountFactory} from "../src/FlopsAccountFactory.sol";
 import {FlopsAccount} from "../src/FlopsAccount.sol";
 import {BundleInfo, FlopsData, FlopsCommitment} from "../src/FlopsStructs.sol";
 
+// Wrapper contract to deal with memory<>calldata conversions
+contract UserOperationLibHelper {
+    function encodePaymasterSignature(bytes calldata paymasterSignature) public returns (bytes memory) {
+        return UserOperationLib.encodePaymasterSignature(paymasterSignature);
+    }
+
+    function getPaymasterSignature(bytes calldata paymasterAndData) public returns (bytes memory) {
+        return UserOperationLib.getPaymasterSignature(paymasterAndData);
+    }
+}
+
 contract Helpers is Test {
     EntryPoint public entryPoint;
     FlopsPaymaster public flopsPaymaster;
     FlopsAccountFactory public factory;
+    UserOperationLibHelper public userOperationLibHelper;
 
     uint256 public alicePrivateKey;
     uint256 public bobPrivateKey;
@@ -27,6 +39,7 @@ contract Helpers is Test {
     address public aliceAddress;
     address public bobAddress;
     address public owner = makeAddr("owner");
+    address public charlie = makeAddr("charlie");
 
     FlopsAccount public aliceAcct;
     FlopsAccount public bobAcct;
@@ -39,12 +52,14 @@ contract Helpers is Test {
         return EntryPoint(target);
     }
 
-    function setupAccounts() public {
+    function setupEOAs() public {
         // Create EOAs
         (aliceAddress, alicePrivateKey) = makeAddrAndKey("alice");
         (bobAddress, bobPrivateKey) = makeAddrAndKey("bob");
         (bundlerAddress, bundlerPrivateKey) = makeAddrAndKey("bundler");
+    }
 
+    function setupAccounts() public {
         // Create smart accounts
         aliceAcct = FlopsAccount(payable(factory.createAccount(aliceAddress)));
         bobAcct = FlopsAccount(payable(factory.createAccount(bobAddress)));
@@ -56,24 +71,9 @@ contract Helpers is Test {
         // Pre-fill gas at entrypoint for smart accounts
         entryPoint.depositTo{value: 100 ether}(address(aliceAcct));
         entryPoint.depositTo{value: 100 ether}(address(bobAcct));
-    }
 
-    /**
-     * Utility function to encode paymasterAndData for FLOps
-     * @param paymaster The paymaster address
-     * @param verificationGasLimit Gas limit for validation
-     * @param postOpGasLimit Gas limit for postOp
-     * @param flopsData The FLOps-specific data
-     * @return Properly encoded paymasterAndData bytes
-     */
-    function encodePaymasterAndData(
-        address paymaster,
-        uint128 verificationGasLimit,
-        uint128 postOpGasLimit,
-        FlopsData memory flopsData
-    ) public pure returns (bytes memory) {
-        bytes memory encodedFlopsData = abi.encode(flopsData);
-        return abi.encodePacked(paymaster, verificationGasLimit, postOpGasLimit, encodedFlopsData);
+        // Add money to the paymaster
+        flopsPaymaster.deposit{value: 100 ether}();
     }
 
     function buildUserOp(
@@ -101,5 +101,36 @@ contract Helpers is Test {
         bytes memory signature = abi.encodePacked(r, s, v);
         userOp.signature = signature;
         return userOp;
+    }
+
+    // Magic placeholder is added so that the getUserOpHash is identical once the paymaster signature is appended
+    function staticPaymasterFieldsWithMagicPlaceholder(
+        address paymaster,
+        uint128 verificationGasLimit,
+        uint128 postOpGasLimit
+    ) public pure returns (bytes memory) {
+        return abi.encodePacked(paymaster, verificationGasLimit, postOpGasLimit, UserOperationLib.PAYMASTER_SIG_MAGIC);
+    }
+
+    function buildPaymasterAndData(
+        address paymaster,
+        uint128 verificationGasLimit,
+        uint128 postOpGasLimit,
+        FlopsData memory flopsData,
+        uint256 privateKey
+    ) public returns (bytes memory) {
+        // Sign over the flopsData
+        bytes32 commitmentHash = flopsPaymaster.computeBundlerCommitHash(flopsData);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, commitmentHash);
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        // Build the FlopsCommitment
+        FlopsCommitment memory flopsCommitment = FlopsCommitment({data: flopsData, signature: signature});
+
+        // Encode the FlopsCommitment with PAYMASTER_SIG_MAGIC
+        bytes memory paymasterSignature = abi.encode(flopsCommitment);
+        bytes memory paymasterSignatureWithLength = userOperationLibHelper.encodePaymasterSignature(paymasterSignature);
+
+        return abi.encodePacked(paymaster, verificationGasLimit, postOpGasLimit, paymasterSignatureWithLength);
     }
 }
