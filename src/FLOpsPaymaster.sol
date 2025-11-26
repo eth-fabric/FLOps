@@ -79,15 +79,12 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         FlopsCommitment memory commitment = abi.decode(paymasterSignature, (FlopsCommitment));
         FlopsData memory d = commitment.data;
 
-        // FLOps guardrail #1: Operation must execute in the block it was committed for
-        if (d.blockNumber != blockNumber) {
-            blocks[blockNumber].broken = true;
-            emit BlockBroken(blockNumber, d.userOpHash, BlockBrokenReason.BrokenPrecondition);
-            return ("", 0);
-        }
+        bool broken = false;
 
         BlockState storage blockState = blocks[blockNumber];
-        bool broken = false;
+
+        // FLOps guardrail #1: Operation must execute in the block it was committed for
+        if (d.blockNumber != blockNumber) broken = true;
 
         // FLOps guardrail #2: Verify pre-transaction state matches rolling hash
         if (d.preTxState != blockState.rollingHash) broken = true;
@@ -96,15 +93,17 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         if (!_verifyBundlerSignature(commitment, userOpHash)) broken = true;
 
         // FLOps guardrail #4: Verify sender is a registered FlopsAccount
-        if (address(_factory) == address(0)) revert FactoryNotSet();
         if (!_factory.isFlopsAccount(userOp.sender)) broken = true;
+
+        // Factory must be set, default to broken
+        if (address(_factory) == address(0)) broken = true;
 
         if (broken) {
             // FLOps violation detected during validation
             blockState.broken = true;
             emit BlockBroken(blockNumber, d.userOpHash, BlockBrokenReason.BrokenPrecondition);
 
-            return ("", 0);
+            return (abi.encode(userOpHash), 0);
         }
 
         // Happy path: advance rolling hash for this block
@@ -129,7 +128,8 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
     {
         // FLOps guardrail: if the transaction reverted, mark the block as broken
         // This guarantees deterministic execution outcomes
-        if (mode != PostOpMode.opSucceeded) {
+        // Note this could be relaxed depending on the use case / target UX
+        if (mode == PostOpMode.opReverted) {
             uint64 blockNumber = uint64(block.number);
             blocks[blockNumber].broken = true;
             bytes32 userOpHash = abi.decode(context, (bytes32));
