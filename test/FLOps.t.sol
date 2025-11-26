@@ -114,8 +114,7 @@ contract FLOpsTest is Helpers {
         assertEq(recovered, aliceAddress);
 
         // Flop data from bundler
-        FlopsData memory flopsData =
-            FlopsData({bundleNumber: 1, preTxState: bytes32(0), userOpHash: userOpHash, endOfBundle: false});
+        FlopsData memory flopsData = FlopsData({blockNumber: 1, preTxState: bytes32(0), userOpHash: userOpHash});
 
         // Append bunder-signed FlopsCommitment to paymasterAndData
         bytes memory paymasterAndData =
@@ -148,9 +147,8 @@ contract FLOpsTest is Helpers {
             buildUserOp(aliceAcct, charlie, 1 ether, _staticPaymasterFields, alicePrivateKey);
 
         // Flop data from bundler
-        FlopsData memory flopsData = FlopsData({
-            bundleNumber: 0, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp), endOfBundle: false
-        });
+        FlopsData memory flopsData =
+            FlopsData({blockNumber: 1, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp)});
 
         // Append bunder-signed FlopsCommitment to paymasterAndData
         bytes memory paymasterAndData =
@@ -187,15 +185,13 @@ contract FLOpsTest is Helpers {
             buildUserOp(bobAcct, charlie, 1 ether, _staticPaymasterFields, bobPrivateKey);
 
         // Flop data from bundler
-        FlopsData memory flopsData1 = FlopsData({
-            bundleNumber: 0, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp1), endOfBundle: false
-        });
+        FlopsData memory flopsData1 =
+            FlopsData({blockNumber: 1, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp1)});
 
         FlopsData memory flopsData2 = FlopsData({
-            bundleNumber: 0,
+            blockNumber: 1,
             preTxState: flopsPaymaster.nextRollingHash(userOp1),
-            userOpHash: entryPoint.getUserOpHash(userOp2),
-            endOfBundle: true
+            userOpHash: entryPoint.getUserOpHash(userOp2)
         });
 
         // Append bunder-signed FlopsCommitment to paymasterAndData
@@ -223,10 +219,10 @@ contract FLOpsTest is Helpers {
         assertEq(address(charlie).balance, 2 ether);
     }
 
-    // ============ UNHAPPY PATH TESTS - BUNDLE BREAKING SCENARIOS ============
+    // ============ UNHAPPY PATH TESTS - BLOCK BREAKING SCENARIOS ============
 
-    // Test 1: Wrong bundle number breaks the bundle
-    function test_wrongBundleNumber_breaksBundle() public {
+    // Test 1: Wrong block number breaks the block
+    function test_wrongBlockNumber_breaksBlock() public {
         address paymaster = address(flopsPaymaster);
         uint128 verificationGasLimit = 100000;
         uint128 postOpGasLimit = 100000;
@@ -236,10 +232,9 @@ contract FLOpsTest is Helpers {
         PackedUserOperation memory userOp =
             buildUserOp(aliceAcct, charlie, 1 ether, _staticPaymasterFields, alicePrivateKey);
 
-        // Use WRONG bundle number (999 instead of 0)
-        FlopsData memory flopsData = FlopsData({
-            bundleNumber: 999, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp), endOfBundle: false
-        });
+        // Use WRONG block number (999 instead of current block)
+        FlopsData memory flopsData =
+            FlopsData({blockNumber: 999, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp)});
 
         bytes memory paymasterAndData =
             buildPaymasterAndData(paymaster, verificationGasLimit, postOpGasLimit, flopsData, bundlerPrivateKey);
@@ -248,20 +243,20 @@ contract FLOpsTest is Helpers {
         PackedUserOperation[] memory userOps = new PackedUserOperation[](1);
         userOps[0] = userOp;
 
-        // Bundle should not be broken before execution
-        assertFalse(flopsPaymaster.bundleBroken());
+        // Block should not be broken before execution
+        assertFalse(flopsPaymaster.blockBroken());
 
         vm.prank(bundlerAddress, bundlerAddress);
         entryPoint.handleOps(userOps, payable(bundlerAddress));
 
-        // Bundle should be marked as broken
-        assertTrue(flopsPaymaster.bundleBroken());
+        // Block should be marked as broken
+        assertTrue(flopsPaymaster.blockBroken());
         // Transaction should not have executed (charlie didn't receive funds)
         assertEq(address(charlie).balance, 0 ether);
     }
 
-    // Test 2: Incorrect preTxState (rolling hash mismatch) breaks bundle
-    function test_incorrectPreTxState_breaksBundle() public {
+    // Test 2: Incorrect preTxState (rolling hash mismatch) breaks block
+    function test_incorrectPreTxState_breaksBlock() public {
         address paymaster = address(flopsPaymaster);
         uint128 verificationGasLimit = 100000;
         uint128 postOpGasLimit = 100000;
@@ -273,10 +268,7 @@ contract FLOpsTest is Helpers {
 
         // Use WRONG preTxState (some random hash instead of bytes32(0))
         FlopsData memory flopsData = FlopsData({
-            bundleNumber: 0,
-            preTxState: keccak256("wrong state"),
-            userOpHash: entryPoint.getUserOpHash(userOp),
-            endOfBundle: false
+            blockNumber: 1, preTxState: keccak256("wrong state"), userOpHash: entryPoint.getUserOpHash(userOp)
         });
 
         bytes memory paymasterAndData =
@@ -286,19 +278,19 @@ contract FLOpsTest is Helpers {
         PackedUserOperation[] memory userOps = new PackedUserOperation[](1);
         userOps[0] = userOp;
 
-        assertFalse(flopsPaymaster.bundleBroken());
+        assertFalse(flopsPaymaster.blockBroken());
 
         vm.prank(bundlerAddress, bundlerAddress);
         entryPoint.handleOps(userOps, payable(bundlerAddress));
 
-        // Bundle should be marked as broken
-        assertTrue(flopsPaymaster.bundleBroken());
+        // Block should be marked as broken
+        assertTrue(flopsPaymaster.blockBroken());
         // Transaction should not have executed
         assertEq(address(charlie).balance, 0 ether);
     }
 
-    // Test 3a: Invalid bundler signature (non-approved bundler) breaks bundle
-    function test_nonApprovedBundler_breaksBundle() public {
+    // Test 3a: Invalid bundler signature (non-approved bundler) breaks block
+    function test_nonApprovedBundler_breaksBlock() public {
         address paymaster = address(flopsPaymaster);
         uint128 verificationGasLimit = 100000;
         uint128 postOpGasLimit = 100000;
@@ -308,9 +300,8 @@ contract FLOpsTest is Helpers {
         PackedUserOperation memory userOp =
             buildUserOp(aliceAcct, charlie, 1 ether, _staticPaymasterFields, alicePrivateKey);
 
-        FlopsData memory flopsData = FlopsData({
-            bundleNumber: 0, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp), endOfBundle: false
-        });
+        FlopsData memory flopsData =
+            FlopsData({blockNumber: 1, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp)});
 
         // Sign with a different private key (not the approved bundler)
         (, uint256 evilPrivateKey) = makeAddrAndKey("evilBundler");
@@ -321,13 +312,13 @@ contract FLOpsTest is Helpers {
         PackedUserOperation[] memory userOps = new PackedUserOperation[](1);
         userOps[0] = userOp;
 
-        assertFalse(flopsPaymaster.bundleBroken());
+        assertFalse(flopsPaymaster.blockBroken());
 
         vm.prank(bundlerAddress, bundlerAddress);
         entryPoint.handleOps(userOps, payable(bundlerAddress));
 
-        // Bundle should be marked as broken
-        assertTrue(flopsPaymaster.bundleBroken());
+        // Block should be marked as broken
+        assertTrue(flopsPaymaster.blockBroken());
         assertEq(address(charlie).balance, 0 ether);
     }
 
@@ -343,7 +334,7 @@ contract FLOpsTest is Helpers {
             buildUserOp(aliceAcct, charlie, 1 ether, _staticPaymasterFields, alicePrivateKey);
 
         FlopsData memory flopsData = FlopsData({
-            bundleNumber: 0, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp), endOfBundle: false
+            blockNumber: uint64(block.number), preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp)
         });
 
         // Build valid paymasterAndData
@@ -367,15 +358,17 @@ contract FLOpsTest is Helpers {
 
         // Corrupted signature causes ECDSA revert during validation
         vm.prank(bundlerAddress, bundlerAddress);
-        vm.expectRevert();
         entryPoint.handleOps(userOps, payable(bundlerAddress));
+
+        // Block should be marked as broken
+        assertTrue(flopsPaymaster.blockBroken());
 
         // Transaction didn't execute
         assertEq(address(charlie).balance, 0 ether);
     }
 
-    // Test 3c: Mismatched userOpHash in commitment breaks bundle
-    function test_mismatchedUserOpHash_breaksBundle() public {
+    // Test 3c: Mismatched userOpHash in commitment breaks block
+    function test_mismatchedUserOpHash_breaksBlock() public {
         address paymaster = address(flopsPaymaster);
         uint128 verificationGasLimit = 100000;
         uint128 postOpGasLimit = 100000;
@@ -387,10 +380,9 @@ contract FLOpsTest is Helpers {
 
         // Use a WRONG userOpHash in the commitment
         FlopsData memory flopsData = FlopsData({
-            bundleNumber: 0,
+            blockNumber: 1,
             preTxState: bytes32(0),
-            userOpHash: keccak256("wrong hash"), // Wrong hash!
-            endOfBundle: false
+            userOpHash: keccak256("wrong hash") // Wrong hash!
         });
 
         bytes memory paymasterAndData =
@@ -400,18 +392,18 @@ contract FLOpsTest is Helpers {
         PackedUserOperation[] memory userOps = new PackedUserOperation[](1);
         userOps[0] = userOp;
 
-        assertFalse(flopsPaymaster.bundleBroken());
+        assertFalse(flopsPaymaster.blockBroken());
 
         vm.prank(bundlerAddress, bundlerAddress);
         entryPoint.handleOps(userOps, payable(bundlerAddress));
 
-        // Bundle should be marked as broken
-        assertTrue(flopsPaymaster.bundleBroken());
+        // Block should be marked as broken
+        assertTrue(flopsPaymaster.blockBroken());
         assertEq(address(charlie).balance, 0 ether);
     }
 
-    // Test 4: Non-FlopsAccount sender breaks bundle
-    function test_nonFlopsAccountSender_breaksBundle() public {
+    // Test 4: Non-FlopsAccount sender breaks block
+    function test_nonFlopsAccountSender_breaksBlock() public {
         // Deploy a FlopsAccount-like contract but don't register it with the factory
         (address fakeOwner, uint256 fakePrivateKey) = makeAddrAndKey("fakeOwner");
 
@@ -438,9 +430,8 @@ contract FLOpsTest is Helpers {
         PackedUserOperation memory userOp =
             buildUserOp(unregisteredAcct, charlie, 1 ether, _staticPaymasterFields, fakePrivateKey);
 
-        FlopsData memory flopsData = FlopsData({
-            bundleNumber: 0, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp), endOfBundle: false
-        });
+        FlopsData memory flopsData =
+            FlopsData({blockNumber: 1, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp)});
 
         bytes memory paymasterAndData =
             buildPaymasterAndData(paymaster, verificationGasLimit, postOpGasLimit, flopsData, bundlerPrivateKey);
@@ -449,20 +440,20 @@ contract FLOpsTest is Helpers {
         PackedUserOperation[] memory userOps = new PackedUserOperation[](1);
         userOps[0] = userOp;
 
-        assertFalse(flopsPaymaster.bundleBroken());
+        assertFalse(flopsPaymaster.blockBroken());
 
         vm.prank(bundlerAddress, bundlerAddress);
         entryPoint.handleOps(userOps, payable(bundlerAddress));
 
-        // Bundle should be marked as broken (account not registered with main factory)
-        assertTrue(flopsPaymaster.bundleBroken());
+        // Block should be marked as broken (account not registered with main factory)
+        assertTrue(flopsPaymaster.blockBroken());
         assertEq(address(charlie).balance, 0 ether);
     }
 
-    // Test 5: Execution failure doesn't break bundle (note: postOp not called with empty context)
-    // This test demonstrates that execution failures alone don't break bundles
+    // Test 5: Execution failure doesn't break block (note: postOp not called with empty context)
+    // This test demonstrates that execution failures alone don't break blocks
     // because _postOp is only called when context is non-empty (per ERC-4337 spec)
-    function test_executionFailure_doesNotBreakBundle() public {
+    function test_executionFailure_doesNotBreakBlock() public {
         address paymaster = address(flopsPaymaster);
         uint128 verificationGasLimit = 100000;
         uint128 postOpGasLimit = 100000;
@@ -473,9 +464,8 @@ contract FLOpsTest is Helpers {
         PackedUserOperation memory userOp =
             buildUserOp(aliceAcct, charlie, 200 ether, _staticPaymasterFields, alicePrivateKey);
 
-        FlopsData memory flopsData = FlopsData({
-            bundleNumber: 0, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp), endOfBundle: false
-        });
+        FlopsData memory flopsData =
+            FlopsData({blockNumber: 1, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp)});
 
         bytes memory paymasterAndData =
             buildPaymasterAndData(paymaster, verificationGasLimit, postOpGasLimit, flopsData, bundlerPrivateKey);
@@ -484,37 +474,36 @@ contract FLOpsTest is Helpers {
         PackedUserOperation[] memory userOps = new PackedUserOperation[](1);
         userOps[0] = userOp;
 
-        assertFalse(flopsPaymaster.bundleBroken());
+        assertFalse(flopsPaymaster.blockBroken());
 
         vm.prank(bundlerAddress, bundlerAddress);
         entryPoint.handleOps(userOps, payable(bundlerAddress));
 
-        // Bundle is NOT broken because postOp isn't called with empty context
+        // Block is NOT broken because postOp isn't called with empty context
         // The rolling hash still advanced during validation
-        assertFalse(flopsPaymaster.bundleBroken());
+        assertFalse(flopsPaymaster.blockBroken());
         // Charlie should not have received any funds
         assertEq(address(charlie).balance, 0 ether);
         // Alice's balance should remain unchanged
         assertEq(address(aliceAcct).balance, 100 ether);
     }
 
-    // Test 6: Cascade effect - once bundle is broken, subsequent operations also fail validation
-    function test_cascadeEffect_brokenBundlePreventsExecution() public {
+    // Test 6: Cascade effect - once block is broken, subsequent operations also fail validation
+    function test_cascadeEffect_brokenBlockPreventsExecution() public {
         address paymaster = address(flopsPaymaster);
         uint128 verificationGasLimit = 200000;
         uint128 postOpGasLimit = 100000;
         bytes memory _staticPaymasterFields =
             staticPaymasterFieldsWithMagicPlaceholder(paymaster, verificationGasLimit, postOpGasLimit);
 
-        // First operation with wrong preTxState (will break bundle)
+        // First operation with wrong preTxState (will break block)
         PackedUserOperation memory userOp1 =
             buildUserOp(aliceAcct, charlie, 1 ether, _staticPaymasterFields, alicePrivateKey);
 
         FlopsData memory flopsData1 = FlopsData({
-            bundleNumber: 0,
+            blockNumber: 1,
             preTxState: keccak256("wrong"), // Wrong state!
-            userOpHash: entryPoint.getUserOpHash(userOp1),
-            endOfBundle: false
+            userOpHash: entryPoint.getUserOpHash(userOp1)
         });
 
         bytes memory paymasterAndData1 =
@@ -525,14 +514,13 @@ contract FLOpsTest is Helpers {
         PackedUserOperation memory userOp2 =
             buildUserOp(bobAcct, charlie, 1 ether, _staticPaymasterFields, bobPrivateKey);
 
-        // This expects the rolling hash to have advanced from userOp1, but it won't because userOp1 broke the bundle
+        // This expects the rolling hash to have advanced from userOp1, but it won't because userOp1 broke the block
         bytes32 expectedRollingHashAfterOp1 = flopsPaymaster.nextRollingHash(userOp1);
 
         FlopsData memory flopsData2 = FlopsData({
-            bundleNumber: 0,
-            preTxState: expectedRollingHashAfterOp1, // This will be wrong because op1 broke the bundle
-            userOpHash: entryPoint.getUserOpHash(userOp2),
-            endOfBundle: true
+            blockNumber: 1,
+            preTxState: expectedRollingHashAfterOp1, // This will be wrong because op1 broke the block
+            userOpHash: entryPoint.getUserOpHash(userOp2)
         });
 
         bytes memory paymasterAndData2 =
@@ -543,22 +531,22 @@ contract FLOpsTest is Helpers {
         userOps[0] = userOp1;
         userOps[1] = userOp2;
 
-        assertFalse(flopsPaymaster.bundleBroken());
+        assertFalse(flopsPaymaster.blockBroken());
 
         vm.prank(bundlerAddress, bundlerAddress);
         entryPoint.handleOps(userOps, payable(bundlerAddress));
 
-        // Bundle should be broken
-        assertTrue(flopsPaymaster.bundleBroken());
+        // Block should be broken
+        assertTrue(flopsPaymaster.blockBroken());
         // Neither transaction should have executed
         assertEq(address(charlie).balance, 0 ether);
         assertEq(address(aliceAcct).balance, 100 ether);
         assertEq(address(bobAcct).balance, 100 ether);
     }
 
-    // Test 7: Multi-op bundle with mid-bundle failure
-    // Both operations fail because bundle is broken during validation before any execution
-    function test_midBundleFailure_validationBreaksBundle() public {
+    // Test 7: Multi-op block with mid-block failure
+    // Both operations fail because block is broken during validation before any execution
+    function test_midBlockFailure_validationBreaksBlock() public {
         address paymaster = address(flopsPaymaster);
         uint128 verificationGasLimit = 200000;
         uint128 postOpGasLimit = 100000;
@@ -572,28 +560,18 @@ contract FLOpsTest is Helpers {
             paymaster,
             verificationGasLimit,
             postOpGasLimit,
-            FlopsData({
-                bundleNumber: 0,
-                preTxState: bytes32(0),
-                userOpHash: entryPoint.getUserOpHash(userOp1),
-                endOfBundle: false
-            }),
+            FlopsData({blockNumber: 1, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp1)}),
             bundlerPrivateKey
         );
 
-        // Second operation - INVALID (wrong preTxState, will break bundle during validation)
+        // Second operation - INVALID (wrong preTxState, will break block during validation)
         PackedUserOperation memory userOp2 =
             buildUserOp(bobAcct, charlie, 1 ether, _staticPaymasterFields, bobPrivateKey);
         userOp2.paymasterAndData = buildPaymasterAndData(
             paymaster,
             verificationGasLimit,
             postOpGasLimit,
-            FlopsData({
-                bundleNumber: 0,
-                preTxState: bytes32(0),
-                userOpHash: entryPoint.getUserOpHash(userOp2),
-                endOfBundle: true
-            }),
+            FlopsData({blockNumber: 1, preTxState: bytes32(0), userOpHash: entryPoint.getUserOpHash(userOp2)}),
             bundlerPrivateKey
         );
 
@@ -601,36 +579,35 @@ contract FLOpsTest is Helpers {
         userOps[0] = userOp1;
         userOps[1] = userOp2;
 
-        assertFalse(flopsPaymaster.bundleBroken());
+        assertFalse(flopsPaymaster.blockBroken());
 
         vm.prank(bundlerAddress, bundlerAddress);
         entryPoint.handleOps(userOps, payable(bundlerAddress));
 
-        // Bundle should be broken (second op broke it during validation)
-        assertTrue(flopsPaymaster.bundleBroken());
-        // Neither operation executed because bundle was broken before execution phase
+        // Block should be broken (second op broke it during validation)
+        assertTrue(flopsPaymaster.blockBroken());
+        // Neither operation executed because block was broken before execution phase
         assertEq(address(charlie).balance, 0 ether);
         assertEq(address(aliceAcct).balance, 100 ether);
         assertEq(address(bobAcct).balance, 100 ether);
     }
 
-    // Test 8: Bundle recovery - next bundle works after broken bundle is finalized
-    function test_bundleRecovery_afterBrokenBundle() public {
+    // Test 8: Block recovery - operations in different blocks work independently
+    function test_blockRecovery_afterBrokenBlock() public {
         address paymaster = address(flopsPaymaster);
         uint128 verificationGasLimit = 100000;
         uint128 postOpGasLimit = 100000;
         bytes memory _staticPaymasterFields =
             staticPaymasterFieldsWithMagicPlaceholder(paymaster, verificationGasLimit, postOpGasLimit);
 
-        // === BUNDLE 0: Break it ===
+        // === BLOCK 1: Break it ===
         PackedUserOperation memory userOp1 =
             buildUserOp(aliceAcct, charlie, 1 ether, _staticPaymasterFields, alicePrivateKey);
 
         FlopsData memory flopsData1 = FlopsData({
-            bundleNumber: 0,
-            preTxState: keccak256("wrong"), // Wrong state - will break bundle
-            userOpHash: entryPoint.getUserOpHash(userOp1),
-            endOfBundle: true
+            blockNumber: 1,
+            preTxState: keccak256("wrong"), // Wrong state - will break block
+            userOpHash: entryPoint.getUserOpHash(userOp1)
         });
 
         bytes memory paymasterAndData1 =
@@ -643,29 +620,21 @@ contract FLOpsTest is Helpers {
         vm.prank(bundlerAddress, bundlerAddress);
         entryPoint.handleOps(userOps1, payable(bundlerAddress));
 
-        // Verify bundle 0 is broken
-        assertTrue(flopsPaymaster.bundleBroken(0));
-        assertEq(flopsPaymaster.currentBundleNumber(), 0);
+        // Verify block 1 is broken
+        assertTrue(flopsPaymaster.blockBroken(1));
         assertEq(address(charlie).balance, 0 ether);
 
-        // Finalize the broken bundle (move to next bundle)
-        vm.prank(owner);
-        flopsPaymaster.finalizeCurrentBundle();
+        // === BLOCK 2: Should work correctly (different block) ===
+        // Advance to next block
+        vm.roll(block.number + 1);
 
-        // Verify we're on bundle 1 now
-        assertEq(flopsPaymaster.currentBundleNumber(), 1);
-        assertFalse(flopsPaymaster.bundleBroken()); // Current bundle (1) is not broken
-        assertTrue(flopsPaymaster.bundleBroken(0)); // But bundle 0 is still marked as broken
-
-        // === BUNDLE 1: Should work correctly ===
         PackedUserOperation memory userOp2 =
             buildUserOp(bobAcct, charlie, 2 ether, _staticPaymasterFields, bobPrivateKey);
 
         FlopsData memory flopsData2 = FlopsData({
-            bundleNumber: 1, // New bundle number
+            blockNumber: 2, // New block number
             preTxState: bytes32(0), // Fresh start
-            userOpHash: entryPoint.getUserOpHash(userOp2),
-            endOfBundle: true
+            userOpHash: entryPoint.getUserOpHash(userOp2)
         });
 
         bytes memory paymasterAndData2 =
@@ -678,8 +647,9 @@ contract FLOpsTest is Helpers {
         vm.prank(bundlerAddress, bundlerAddress);
         entryPoint.handleOps(userOps2, payable(bundlerAddress));
 
-        // Verify bundle 1 succeeded
-        assertFalse(flopsPaymaster.bundleBroken(1));
+        // Verify block 2 succeeded
+        assertFalse(flopsPaymaster.blockBroken(2));
+        assertTrue(flopsPaymaster.blockBroken(1)); // Block 1 still broken
         assertEq(address(charlie).balance, 2 ether);
         assertEq(address(bobAcct).balance, 98 ether);
     }

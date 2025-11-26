@@ -39,8 +39,10 @@ contract FlopsAccount is BaseAccount {
 
     function _requireForExecute() internal view override {
         _requireFromEntryPoint();
-        // FLOps global guard: once current bundle is broken, no FlopsAccount should execute in this bundle
-        if (flopsPaymaster.bundleBroken()) revert("FLOps: bundle broken");
+        // FLOps guardrail: once current block is broken, no FlopsAccount should execute for this block
+        if (flopsPaymaster.blockBroken()) {
+            revert("FLOps: block script broken");
+        }
     }
 
     /**

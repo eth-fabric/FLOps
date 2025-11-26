@@ -7,21 +7,20 @@ import {IEntryPoint} from "lib/account-abstraction/contracts/interfaces/IEntryPo
 import {UserOperationLib} from "lib/account-abstraction/contracts/core/UserOperationLib.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 import {IFlopsPaymaster} from "./IFlopsPaymaster.sol";
 import {IFlopsAccountFactory} from "./IFlopsAccountFactory.sol";
-import {BundleInfo, FlopsData, FlopsCommitment} from "./FlopsStructs.sol";
+import {BlockState, FlopsData, FlopsCommitment} from "./FlopsStructs.sol";
 
 contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
+    event BlockBroken(uint64 indexed blockNumber, bytes32 userOpHash);
+
     mapping(address => bool) public approvedBundlers;
-    mapping(uint256 => BundleInfo) public bundles;
-    uint256 public currentBundleNumber;
-    bytes32 public rollingHash;
+    mapping(uint64 => BlockState) public blocks;
     IFlopsAccountFactory private _factory;
 
     constructor(IEntryPoint _entryPoint, address _owner, address[] memory bundlers) BasePaymaster(_entryPoint, _owner) {
-        currentBundleNumber = 0;
-        rollingHash = bytes32(0);
         for (uint256 i = 0; i < bundlers.length; i++) {
             approvedBundlers[bundlers[i]] = true;
         }
@@ -38,19 +37,21 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         override
         returns (bytes memory context, uint256 validationData)
     {
+        uint64 blockNumber = uint64(block.number);
         FlopsData memory d =
         abi.decode(UserOperationLib.getPaymasterSignature(userOp.paymasterAndData), (FlopsCommitment)).data;
 
-        // Only operate on the live bundle
-        if (d.bundleNumber != currentBundleNumber) {
-            bundles[currentBundleNumber].broken = true;
+        // FLOps guardrail: FLOps must execute in the block it was committed for
+        if (d.blockNumber != blockNumber) {
+            blocks[blockNumber].broken = true;
+            emit BlockBroken(blockNumber, d.userOpHash);
             return ("", 0);
         }
 
         bool broken = false;
 
         // Verify pre-transaction state
-        if (d.preTxState != rollingHash) broken = true;
+        if (d.preTxState != blocks[blockNumber].rollingHash) broken = true;
 
         // Verify bundler signature
         if (!verifyBundlerSignature(userOp)) broken = true;
@@ -60,18 +61,13 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
 
         if (broken) {
             // FLOps violation detected during validation
-            bundles[d.bundleNumber].broken = true;
-            // do not advance rollingHash
+            blocks[blockNumber].broken = true;
+            emit BlockBroken(blockNumber, d.userOpHash);
             return ("", 0);
         }
 
-        // Happy path: advance rolling hash for this bundle
-        rollingHash = keccak256(abi.encode(rollingHash, d.userOpHash));
-
-        // If this is the end of bundle, finalize it
-        if (d.endOfBundle) {
-            _finalizeBundle();
-        }
+        // Happy path: advance rolling hash for this block
+        blocks[blockNumber].rollingHash = keccak256(abi.encode(blocks[blockNumber].rollingHash, d.userOpHash));
 
         return ("", 0);
     }
@@ -95,14 +91,17 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         internal
         override
     {
+        // FLOps guardrail: if the transaction reverted, mark the block as broken
+        // This is for guaranteeing correct execution
         if (mode != PostOpMode.opSucceeded) {
-            bundles[currentBundleNumber].broken = true;
+            blocks[uint64(block.number)].broken = true;
+            emit BlockBroken(uint64(block.number), bytes32(0)); // todo: add userOpHash via context
         }
         // any billing or accounting can go here later
     }
 
     function nextRollingHash(PackedUserOperation calldata userOp) public view returns (bytes32) {
-        return keccak256(abi.encode(rollingHash, entryPoint().getUserOpHash(userOp)));
+        return keccak256(abi.encode(blocks[uint64(block.number)].rollingHash, entryPoint().getUserOpHash(userOp)));
     }
 
     function verifyBundlerSignature(PackedUserOperation calldata userOp) public view returns (bool) {
@@ -121,16 +120,12 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         return approvedBundlers[recovered];
     }
 
-    function finalizeCurrentBundle() external onlyOwner {
-        _finalizeBundle();
+    function blockBroken() external view returns (bool) {
+        return blocks[uint64(block.number)].broken;
     }
 
-    function bundleBroken() external view returns (bool) {
-        return bundles[currentBundleNumber].broken;
-    }
-
-    function bundleBroken(uint256 bundleNumber) external view returns (bool) {
-        return bundles[bundleNumber].broken;
+    function blockBroken(uint64 blockNumber) external view returns (bool) {
+        return blocks[blockNumber].broken;
     }
 
     function setFactory(address factory_) external onlyOwner {
@@ -145,16 +140,4 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         bytes32 digest = keccak256(abi.encode(data));
         return MessageHashUtils.toEthSignedMessageHash(digest);
     }
-
-    function _finalizeBundle() internal {
-        BundleInfo storage info = bundles[currentBundleNumber];
-        require(!info.finalized, "FLOps: bundle already finalized");
-        info.finalRollingHash = rollingHash;
-        info.finalized = true;
-        // move to next bundle
-        currentBundleNumber += 1;
-        // reset rolling hash
-        rollingHash = bytes32(0);
-    }
 }
-

@@ -13,7 +13,7 @@ import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {FlopsPaymaster} from "../src/FlopsPaymaster.sol";
 import {FlopsAccountFactory} from "../src/FlopsAccountFactory.sol";
 import {FlopsAccount} from "../src/FlopsAccount.sol";
-import {BundleInfo, FlopsData, FlopsCommitment} from "../src/FlopsStructs.sol";
+import {FlopsData, FlopsCommitment} from "../src/FlopsStructs.sol";
 
 // Wrapper contract to deal with memory<>calldata conversions
 contract UserOperationLibHelper {

@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-struct BundleInfo {
+struct BlockState {
     bool broken;
-    bool finalized;
-    bytes32 finalRollingHash;
+    bytes32 rollingHash;
 }
 
 struct FlopsData {
-    uint256 bundleNumber;
+    uint64 blockNumber;
     bytes32 preTxState;
     bytes32 userOpHash;
-    bool endOfBundle;
 }
 
 struct FlopsCommitment {
