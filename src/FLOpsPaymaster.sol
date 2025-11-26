@@ -9,9 +9,9 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
-import {IFlopsPaymaster} from "./IFlopsPaymaster.sol";
-import {IFlopsAccountFactory} from "./IFlopsAccountFactory.sol";
-import {IBundlerManager} from "./IBundlerManager.sol";
+import {IFlopsPaymaster} from "./interfaces/IFlopsPaymaster.sol";
+import {IFlopsAccountFactory} from "./interfaces/IFlopsAccountFactory.sol";
+import {IBundlerManager} from "./interfaces/IBundlerManager.sol";
 import {BlockState, FlopsData, FlopsCommitment, BlockBrokenReason} from "./FlopsStructs.sol";
 
 /**
@@ -25,32 +25,6 @@ import {BlockState, FlopsData, FlopsCommitment, BlockBrokenReason} from "./Flops
  *      This two-step initialization is necessary because both contracts need to reference each other.
  */
 contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
-    // ============ Custom Errors ============
-
-    /// @notice Thrown when a zero address is provided where not allowed
-    error ZeroAddress();
-
-    /// @notice Thrown when factory is not set
-    error FactoryNotSet();
-
-    // ============ Events ============
-
-    /// @notice Emitted when a block's execution script is broken
-    /// @param blockNumber The block number that was broken
-    /// @param userOpHash The hash of the user operation that broke the block
-    /// @param reason The reason why the block was broken
-    event BlockBroken(uint64 indexed blockNumber, bytes32 userOpHash, BlockBrokenReason reason);
-
-    /// @notice Emitted when the factory address is updated
-    /// @param oldFactory The previous factory address
-    /// @param newFactory The new factory address
-    event FactoryUpdated(address indexed oldFactory, address indexed newFactory);
-
-    /// @notice Emitted when the bundler manager address is updated
-    /// @param oldManager The previous bundler manager address
-    /// @param newManager The new bundler manager address
-    event BundlerManagerUpdated(address indexed oldManager, address indexed newManager);
-
     // ============ State Variables ============
 
     /// @notice Mapping of block numbers to their state (broken status and rolling hash)

@@ -6,7 +6,8 @@ import {IEntryPoint} from "lib/account-abstraction/contracts/interfaces/IEntryPo
 import {PackedUserOperation} from "lib/account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {SIG_VALIDATION_FAILED, SIG_VALIDATION_SUCCESS} from "lib/account-abstraction/contracts/core/Helpers.sol";
-import {IFlopsPaymaster} from "./IFlopsPaymaster.sol";
+import {IFlopsPaymaster} from "./interfaces/IFlopsPaymaster.sol";
+import {IFlopsAccount} from "./interfaces/IFlopsAccount.sol";
 
 /**
  * @title FlopsAccount
@@ -22,18 +23,7 @@ import {IFlopsPaymaster} from "./IFlopsPaymaster.sol";
  *      - Paymaster reference enforces FLOps protocol rules
  *
  */
-contract FlopsAccount is BaseAccount {
-    // ============ Custom Errors ============
-
-    /// @notice Thrown when a zero address is provided where not allowed
-    error ZeroAddress();
-
-    /// @notice Thrown when attempting to execute in a broken block
-    error BlockBroken();
-
-    /// @notice Thrown when signature validation fails
-    error InvalidSignature();
-
+contract FlopsAccount is BaseAccount, IFlopsAccount {
     // ============ Constants ============
 
     /// @notice The canonical ERC-4337 EntryPoint address
@@ -78,7 +68,7 @@ contract FlopsAccount is BaseAccount {
      * @notice Returns the EntryPoint contract
      * @return The IEntryPoint interface for the canonical EntryPoint
      */
-    function entryPoint() public pure override returns (IEntryPoint) {
+    function entryPoint() public pure override(BaseAccount, IFlopsAccount) returns (IEntryPoint) {
         return IEntryPoint(ENTRY_POINT_ADDRESS);
     }
 

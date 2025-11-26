@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {FlopsAccount} from "./FlopsAccount.sol";
+import {IFlopsAccountFactory} from "./interfaces/IFlopsAccountFactory.sol";
 
 /**
  * @title FlopsAccountFactory
@@ -13,19 +14,7 @@ import {FlopsAccount} from "./FlopsAccount.sol";
  *      This factory is referenced by FlopsPaymaster via setFactory() after deployment.
  *      The paymaster address must be set during factory construction.
  */
-contract FlopsAccountFactory {
-    // ============ Custom Errors ============
-
-    /// @notice Thrown when a zero address is provided where not allowed
-    error ZeroAddress();
-
-    // ============ Events ============
-
-    /// @notice Emitted when a new FlopsAccount is created
-    /// @param account The address of the newly created account
-    /// @param owner The owner address of the account
-    event AccountCreated(address indexed account, address indexed owner);
-
+contract FlopsAccountFactory is IFlopsAccountFactory {
     // ============ State Variables ============
 
     /// @notice Mapping of account addresses to their registration status

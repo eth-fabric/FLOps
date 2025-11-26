@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {PackedUserOperation} from "lib/account-abstraction/contracts/interfaces/PackedUserOperation.sol";
-import {FlopsData, BlockBrokenReason} from "./FlopsStructs.sol";
+import {FlopsData, BlockBrokenReason} from "../FlopsStructs.sol";
 
 /**
  * @title IFlopsPaymaster
