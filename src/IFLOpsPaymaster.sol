@@ -32,6 +32,12 @@ interface IFlopsPaymaster {
     function factory() external view returns (address);
 
     /**
+     * @notice Returns the bundler manager address
+     * @return The BundlerManager address
+     */
+    function bundlerManager() external view returns (address);
+
+    /**
      * @notice Computes what the rolling hash would be after including a user operation
      * @param userOp The user operation to simulate including
      * @return The next rolling hash value
@@ -61,14 +67,8 @@ interface IFlopsPaymaster {
     function setFactory(address factory_) external;
 
     /**
-     * @notice Approves a new bundler
-     * @param bundler The bundler address to approve
+     * @notice Sets the BundlerManager reference
+     * @param bundlerManager_ The BundlerManager contract address
      */
-    function approveBundler(address bundler) external;
-
-    /**
-     * @notice Revokes a bundler's approval
-     * @param bundler The bundler address to revoke
-     */
-    function revokeBundler(address bundler) external;
+    function setBundlerManager(address bundlerManager_) external;
 }

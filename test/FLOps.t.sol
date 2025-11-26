@@ -13,6 +13,7 @@ import {UserOperationLib} from "lib/account-abstraction/contracts/core/UserOpera
 
 import {FlopsAccount} from "../src/FlopsAccount.sol";
 import {FlopsAccountFactory} from "../src/FlopsAccountFactory.sol";
+import {BundlerManager} from "../src/BundlerManager.sol";
 import {FlopsData, FlopsCommitment} from "../src/FlopsStructs.sol";
 import {Helpers, UserOperationLibHelper} from "./Helpers.sol";
 
@@ -23,7 +24,8 @@ contract FLOpsTest is Helpers {
         entryPoint = deployEntryPoint();
         address[] memory bundlers = new address[](1);
         bundlers[0] = bundlerAddress;
-        flopsPaymaster = new FlopsPaymaster(IEntryPoint(address(entryPoint)), owner, bundlers);
+        BundlerManager bundlerManager = new BundlerManager(owner, bundlers);
+        flopsPaymaster = new FlopsPaymaster(IEntryPoint(address(entryPoint)), owner, address(bundlerManager));
 
         factory = new FlopsAccountFactory(address(flopsPaymaster));
 
@@ -450,10 +452,8 @@ contract FLOpsTest is Helpers {
         assertEq(address(charlie).balance, 0 ether);
     }
 
-    // Test 5: Execution failure doesn't break block (note: postOp not called with empty context)
-    // This test demonstrates that execution failures alone don't break blocks
-    // because _postOp is only called when context is non-empty (per ERC-4337 spec)
-    function test_executionFailure_doesNotBreakBlock() public {
+    // Test 5: Execution failure breaks block
+    function test_executionFailure_breaksBlock() public {
         address paymaster = address(flopsPaymaster);
         uint128 verificationGasLimit = 100000;
         uint128 postOpGasLimit = 100000;
@@ -479,9 +479,8 @@ contract FLOpsTest is Helpers {
         vm.prank(bundlerAddress, bundlerAddress);
         entryPoint.handleOps(userOps, payable(bundlerAddress));
 
-        // Block is NOT broken because postOp isn't called with empty context
-        // The rolling hash still advanced during validation
-        assertFalse(flopsPaymaster.blockBroken());
+        // Block should be marked as broken
+        assertTrue(flopsPaymaster.blockBroken());
         // Charlie should not have received any funds
         assertEq(address(charlie).balance, 0 ether);
         // Alice's balance should remain unchanged

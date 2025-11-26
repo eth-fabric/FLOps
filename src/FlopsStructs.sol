@@ -8,6 +8,16 @@ pragma solidity ^0.8.20;
  */
 
 /**
+ * @notice Indicates why a block was marked as broken
+ * @param BrokenPrecondition Validation failed in _validatePaymasterUserOp (pre-execution)
+ * @param FailedExecution Execution failed in _postOp (post-execution)
+ */
+enum BlockBrokenReason {
+    BrokenPrecondition,
+    FailedExecution
+}
+
+/**
  * @notice Tracks the state of a block in the FLOps protocol
  * @param broken Whether this block's execution has been violated
  * @param rollingHash The cumulative hash of all user operations in this block

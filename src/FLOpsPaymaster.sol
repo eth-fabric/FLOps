@@ -11,7 +11,8 @@ import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 import {IFlopsPaymaster} from "./IFlopsPaymaster.sol";
 import {IFlopsAccountFactory} from "./IFlopsAccountFactory.sol";
-import {BlockState, FlopsData, FlopsCommitment} from "./FlopsStructs.sol";
+import {IBundlerManager} from "./IBundlerManager.sol";
+import {BlockState, FlopsData, FlopsCommitment, BlockBrokenReason} from "./FlopsStructs.sol";
 
 /**
  * @title FlopsPaymaster
@@ -29,9 +30,6 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
     /// @notice Thrown when a zero address is provided where not allowed
     error ZeroAddress();
 
-    /// @notice Thrown when bundler array is empty during construction
-    error EmptyBundlerArray();
-
     /// @notice Thrown when factory is not set
     error FactoryNotSet();
 
@@ -40,25 +38,20 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
     /// @notice Emitted when a block's execution script is broken
     /// @param blockNumber The block number that was broken
     /// @param userOpHash The hash of the user operation that broke the block
-    event BlockBroken(uint64 indexed blockNumber, bytes32 userOpHash);
-
-    /// @notice Emitted when a bundler is approved
-    /// @param bundler The address of the approved bundler
-    event BundlerApproved(address indexed bundler);
-
-    /// @notice Emitted when a bundler is revoked
-    /// @param bundler The address of the revoked bundler
-    event BundlerRevoked(address indexed bundler);
+    /// @param reason The reason why the block was broken
+    event BlockBroken(uint64 indexed blockNumber, bytes32 userOpHash, BlockBrokenReason reason);
 
     /// @notice Emitted when the factory address is updated
     /// @param oldFactory The previous factory address
     /// @param newFactory The new factory address
     event FactoryUpdated(address indexed oldFactory, address indexed newFactory);
 
-    // ============ State Variables ============
+    /// @notice Emitted when the bundler manager address is updated
+    /// @param oldManager The previous bundler manager address
+    /// @param newManager The new bundler manager address
+    event BundlerManagerUpdated(address indexed oldManager, address indexed newManager);
 
-    /// @notice Mapping of approved bundler addresses
-    mapping(address => bool) public approvedBundlers;
+    // ============ State Variables ============
 
     /// @notice Mapping of block numbers to their state (broken status and rolling hash)
     mapping(uint64 => BlockState) public blocks;
@@ -66,24 +59,23 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
     /// @notice Reference to the FlopsAccountFactory for validating account registration
     IFlopsAccountFactory private _factory;
 
+    /// @notice Reference to the BundlerManager for validating bundler signatures
+    IBundlerManager private _bundlerManager;
+
     // ============ Constructor ============
 
     /**
      * @notice Constructs the FlopsPaymaster
      * @param _entryPoint The ERC-4337 EntryPoint contract
      * @param _owner The owner address for this paymaster
-     * @param bundlers Array of approved bundler addresses
-     * @dev Factory must be set separately via setFactory() after deployment
+     * @param bundlerManager_ The BundlerManager contract address
+     * @dev Factory must be set separately via setFactory() after deployment.
+     *      Bundler approval/revocation is delegated to the BundlerManager contract.
      */
-    constructor(IEntryPoint _entryPoint, address _owner, address[] memory bundlers) BasePaymaster(_entryPoint, _owner) {
+    constructor(IEntryPoint _entryPoint, address _owner, address bundlerManager_) BasePaymaster(_entryPoint, _owner) {
         if (_owner == address(0)) revert ZeroAddress();
-        if (bundlers.length == 0) revert EmptyBundlerArray();
-
-        for (uint256 i = 0; i < bundlers.length; i++) {
-            if (bundlers[i] == address(0)) revert ZeroAddress();
-            approvedBundlers[bundlers[i]] = true;
-            emit BundlerApproved(bundlers[i]);
-        }
+        if (bundlerManager_ == address(0)) revert ZeroAddress();
+        _bundlerManager = IBundlerManager(bundlerManager_);
     }
 
     // ============ Internal Functions ============
@@ -93,7 +85,7 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
      * @param userOp The user operation to validate
      * @param userOpHash The hash of the user operation (cached for gas optimization)
      * @param maxCost The maximum gas cost of the operation
-     * @return context Empty bytes (no postOp context needed for FLOps)
+     * @return context Encoded userOpHash for postOp error tracking
      * @return validationData Always returns 0 (validation success/failure indicated by block.broken state)
      * @dev This function enforces four critical FLOps guardrails:
      *      1. Block number must match current block
@@ -116,7 +108,7 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         // FLOps guardrail #1: Operation must execute in the block it was committed for
         if (d.blockNumber != blockNumber) {
             blocks[blockNumber].broken = true;
-            emit BlockBroken(blockNumber, d.userOpHash);
+            emit BlockBroken(blockNumber, d.userOpHash, BlockBrokenReason.BrokenPrecondition);
             return ("", 0);
         }
 
@@ -136,7 +128,7 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         if (broken) {
             // FLOps violation detected during validation
             blockState.broken = true;
-            emit BlockBroken(blockNumber, d.userOpHash);
+            emit BlockBroken(blockNumber, d.userOpHash, BlockBrokenReason.BrokenPrecondition);
 
             return ("", 0);
         }
@@ -144,19 +136,18 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         // Happy path: advance rolling hash for this block
         blockState.rollingHash = keccak256(abi.encode(blockState.rollingHash, d.userOpHash));
 
-        return ("", 0);
+        return (abi.encode(userOpHash), 0);
     }
 
     /**
      * @notice Post-operation handler called after user operation execution
      * @param mode Execution result: opSucceeded or opReverted
-     * @param context Empty context from validatePaymasterUserOp
+     * @param context Encoded userOpHash from validatePaymasterUserOp
      * @param actualGasCost Actual gas cost incurred
      * @param actualUserOpFeePerGas Gas price for this operation
-     * @dev FLOps currently returns empty context, so this is only called when EntryPoint
-     *      explicitly invokes it. If execution reverts, the block is marked as broken to
-     *      maintain deterministic execution guarantees.
-     *      Note: userOpHash is not tracked in context as it's not critical for postOp logic.
+     * @dev If execution reverts, the block is marked as broken to maintain
+     *      deterministic execution guarantees. The userOpHash from context
+     *      is used for accurate error event emission.
      */
     function _postOp(PostOpMode mode, bytes calldata context, uint256 actualGasCost, uint256 actualUserOpFeePerGas)
         internal
@@ -167,8 +158,8 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
         if (mode != PostOpMode.opSucceeded) {
             uint64 blockNumber = uint64(block.number);
             blocks[blockNumber].broken = true;
-            // userOpHash not available in postOp context for FLOps (empty context returned)
-            emit BlockBroken(blockNumber, bytes32(0));
+            bytes32 userOpHash = abi.decode(context, (bytes32));
+            emit BlockBroken(blockNumber, userOpHash, BlockBrokenReason.FailedExecution);
         }
         // Future enhancement: Add billing or accounting logic here
     }
@@ -178,7 +169,8 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
      * @param commitment The FlopsCommitment containing data and signature
      * @param userOpHash A trusted user operation hash
      * @return True if signature is valid and from an approved bundler
-     * @dev Reuses already-computed values for gas optimization
+     * @dev Reuses already-computed values for gas optimization.
+     *      Bundler approval is validated via the BundlerManager contract.
      */
     function _verifyBundlerSignature(FlopsCommitment memory commitment, bytes32 userOpHash)
         internal
@@ -193,7 +185,7 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
 
         // Verify the signer is an approved bundler
         address recovered = ECDSA.recover(commitmentHash, commitment.signature);
-        return approvedBundlers[recovered];
+        return _bundlerManager.isApprovedBundler(recovered);
     }
 
     /**
@@ -273,6 +265,14 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
     }
 
     /**
+     * @notice Returns the bundler manager address
+     * @return The BundlerManager address
+     */
+    function bundlerManager() external view returns (address) {
+        return address(_bundlerManager);
+    }
+
+    /**
      * @notice Computes the hash that bundlers must sign to commit to a transaction
      * @param data The FlopsData containing block number, pre-tx state, and userOpHash
      * @return The EIP-191 signed message hash
@@ -298,24 +298,16 @@ contract FlopsPaymaster is BasePaymaster, IFlopsPaymaster {
     }
 
     /**
-     * @notice Approves a new bundler
-     * @param bundler The bundler address to approve
-     * @dev Only approved bundlers can sign FLOps commitments
+     * @notice Sets the BundlerManager reference
+     * @param bundlerManager_ The BundlerManager contract address
+     * @dev Allows updating the bundler manager if needed.
+     *      Zero address check ensures bundler manager is properly initialized.
+     *      Note: Bundler approval/revocation should be done via the BundlerManager contract.
      */
-    function approveBundler(address bundler) external onlyOwner {
-        if (bundler == address(0)) revert ZeroAddress();
-        if (bundler == address(0)) revert ZeroAddress();
-        approvedBundlers[bundler] = true;
-        emit BundlerApproved(bundler);
-    }
-
-    /**
-     * @notice Revokes a bundler's approval
-     * @param bundler The bundler address to revoke
-     * @dev Revoked bundlers can no longer sign valid FLOps commitments
-     */
-    function revokeBundler(address bundler) external onlyOwner {
-        approvedBundlers[bundler] = false;
-        emit BundlerRevoked(bundler);
+    function setBundlerManager(address bundlerManager_) external onlyOwner {
+        if (bundlerManager_ == address(0)) revert ZeroAddress();
+        address oldManager = address(_bundlerManager);
+        _bundlerManager = IBundlerManager(bundlerManager_);
+        emit BundlerManagerUpdated(oldManager, bundlerManager_);
     }
 }
