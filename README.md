@@ -179,8 +179,26 @@ There is no need to reason about internal calls or nested execution, the slashin
 
 This can be proven to a slasher contract via MPT proofs against the transactions trie.
 
-## FLOp lifecycle
+## FLOps for L1
+When paired with based preconfirmations, FLOps give users fast execution preconfs that are also revert-protected.
+A FLOp can only execute on its committed pre-state. If the pre-state is wrong, it reverts and the block becomes slashable.
+This makes FLOps safer than other fast-execution approaches and makes faults simple to reason about and prove.
 
+Using Fabric components like [URC](https://github.com/eth-fabric/urc) and the [Constraints spec](https://github.com/eth-fabric/constraints-specs), implementing FLOps at L1 becomes straightforward.
+The preconfer constrains the builder to place the `EntryPoint.handleOps()` transactions at specific indices. MPT proofs against the transaction trie allows constraint satisfaction to be trustlessly proven prior to block publication. Assuming each bundle contains many flops, the number of `EntryPoint.handleOps()` calls could be reduced which minimizes proving latency.
+
+In short: FLOps + based preconfs give Ethereum L1 fast, predictable, simulation-safe execution without protocol changes.
+
+![L1 Block With Constraints](images/L1-Block-With-Constraints.png)
+
+## FLOps for L2s
+Rollups are already experimenting with faster confirmation schemes such as [flashblocks](https://docs.base.org/base-chain/flashblocks/apps), [frags](https://gattaca-com.github.io/based-op/scaling#block-production), and other sequencer-level commitments to improve UX.
+Today, these systems require fully trusting the sequencer not to equivocate or reorder what they promised.
+
+FLOps provide a simple way to add safety and accountability to these protocols.
+When the sequencer plays the role of the FLOps bundler, each fast-confirm commitment becomes verifiable on-chain, and any deviation (i.e., misordering, omission, or conflicting batches) produces a provable fault rather than a trust assumption.
+
+This turns fast L2 confirmations into accountable confirmations with built-in revert protection.
 
 ## Notes
 This repo is a POC that is meant to be extended. Specifically, the `FlopsAccount` logic is extremely minimal and fails to leverage ERC-4337 (i.e., passkeys/etc). The `BundlerManager` is also intentionally simple, but can be expanded to become preconfer-aware.
